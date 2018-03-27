@@ -186,9 +186,20 @@ func (ti *treeIndex) Compact(rev int64) map[revision]struct{} {
 	plog.Printf("store.index: compact %d", rev)
 	// TODO: do not hold the lock for long time?
 	// This is probably OK. Compacting 10M keys takes O(10ms).
+	//ti.Lock()
+	//defer ti.Unlock()
+  treeCopy := ti.tree.Clone()
+
+	counter := 0
+	should_lock := true
+	treeCopy.Ascend(compactIndex(rev, available, &ti, &emptyki, &counter, &should_lock))
+
+	if should_lock == false {
+		ti.Unlock()
+	}
+
 	ti.Lock()
 	defer ti.Unlock()
-	ti.tree.Ascend(compactIndex(rev, available, &emptyki))
 	for _, ki := range emptyki {
 		item := ti.tree.Delete(ki)
 		if item == nil {
@@ -211,12 +222,24 @@ func (ti *treeIndex) Keep(rev int64) map[revision]struct{} {
 	return available
 }
 
-func compactIndex(rev int64, available map[revision]struct{}, emptyki *[]*keyIndex) func(i btree.Item) bool {
+func compactIndex(rev int64, available map[revision]struct{}, emptyki *[]*keyIndex, , *ti, *counter, *should_lock) func(i btree.Item) bool {
 	return func(i btree.Item) bool {
+		if should_lock {
+			ti.Lock()
+			should_lock = false
+		}
 		keyi := i.(*keyIndex)
 		keyi.compact(rev, available)
 		if keyi.isEmpty() {
 			*emptyki = append(*emptyki, keyi)
+		}
+		counter++
+		if counter % 10000 == 0 {
+			ti.Unlock()
+			should_lock = true
+			select {
+				case<-time.After(100 * time.Millisecond):
+			}
 		}
 		return true
 	}
